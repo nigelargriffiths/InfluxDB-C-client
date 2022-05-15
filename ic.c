@@ -74,12 +74,12 @@ void ic_debug(int level)
 void ic_tags(char *t)	
 {
     DEBUG fprintf(stderr,"ic_tags(%s)\n",t);
-    if( influx_tags == (char *) 0) {
-        if( (influx_tags = (char *)malloc(MEGABYTE)) == (char *)-1)
+    if( influx_tags == NULL ) {
+        if( (influx_tags = (char *)malloc(MEGABYTE)) == (char *)NULL)
            error("failed to malloc() tags buffer");
     }
 
-    strncpy(influx_tags,t,256);
+    strncpy(influx_tags, t, MEGABYTE);
 }
 
 void ic_influx_database(char *host, long port, char *db) /* note: converts influxdb hostname to ip address */
@@ -150,12 +150,9 @@ int create_socket() 		/* returns 1 for error and 0 for ok */
 
 void ic_check(long adding) /* Check the buffer space */
 {
-    if(output == (char *)0) {			/* First time create the buffer *
-	if( (output = (char *)malloc(MEGABYTE)) == (char *)-1)
-	    error("failed to malloc() output buffer");
-    }
-    if(output_char + (2*adding) > output_size) /* When near the end of the output buffer, extend it*/
-	if( (output = (char *)realloc(output, output_size + MEGABYTE)) == (char *)-1)
+    if(output_char + (2*adding) >= output_size) { /* When near the end of the output buffer, extend it*/
+        output_size += MEGABYTE;
+        if( (output = (char *)realloc(output, output_size)) == (char *)NULL)
 	    error("failed to realloc() output buffer");
     }
 }
@@ -173,6 +170,9 @@ void ic_measure(char *section)
     ic_check( strlen(section) + strlen(influx_tags) + 3);
 
     output_char += sprintf(&output[output_char], "%s,%s ", section, influx_tags);
+    if(strlen(section) > sizeof(saved_section)){
+        abort();
+    }
     strcpy(saved_section, section);
     first_sub = 1;
     subended = 0;
@@ -212,6 +212,9 @@ void ic_sub(char *resource)
     first_sub = 0;
 
     /* remove the trailing s */
+    if(strlen(saved_section) > sizeof(saved_sub)){
+        abort();
+    }
     strcpy(saved_sub, saved_section);
     if (saved_sub[strlen(saved_sub) - 1] == 's') {
 	saved_sub[strlen(saved_sub) - 1] = 0;
