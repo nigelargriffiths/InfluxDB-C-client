@@ -178,12 +178,17 @@ void ic_measure(const char *section)
     DEBUG fprintf(stderr, "ic_measure(\"%s\") count=%ld\n", section, output_char);
 }
 
-void ic_measureend()
+#define TIMESTAMP_STR_LEN sizeof("18446744073709551615")
+void ic_measureend(const uint64_t stamp)
 {
-    ic_check( 4 );
+    ic_check( 4 + TIMESTAMP_STR_LEN);
     remove_ending_comma_if_any();
     if (!subended) {
+        if(stamp){
+            output_char += sprintf(&output[output_char], "  %"PRIu64"\n", stamp);
+        }else{
          output_char += sprintf(&output[output_char], "   \n");
+        }
     }
     subended = 0;
     DEBUG fprintf(stderr, "ic_measureend()\n");
@@ -226,11 +231,15 @@ void ic_sub(const char *resource)
     DEBUG fprintf(stderr, "ic_sub(\"%s\") count=%ld\n", resource, output_char);
 }
 
-void ic_subend()
+void ic_subend(uint64_t stamp_nsec)
 {
-    ic_check( 4 );
+    ic_check( 4 + TIMESTAMP_STR_LEN);
     remove_ending_comma_if_any();
-    output_char += sprintf(&output[output_char], "   \n");
+    if(stamp_nsec){
+        output_char += sprintf(&output[output_char], "  %"PRIu64"\n", stamp_nsec);
+    }else{
+        output_char += sprintf(&output[output_char], "   \n");
+    }
     subended = 1;
     DEBUG fprintf(stderr, "ic_subend()\n");
 }
