@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <inttypes.h>
 #include <ic.h>
 
 #define DEBUG   if(debug)
