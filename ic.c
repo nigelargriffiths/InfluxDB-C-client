@@ -29,7 +29,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <inttypes.h>
-#include <ic.h>
+#include "ic.h"
 #include <stdarg.h>
 #include <assert.h>
 

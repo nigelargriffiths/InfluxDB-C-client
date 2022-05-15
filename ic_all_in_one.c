@@ -28,6 +28,10 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <inttypes.h>
+#include "ic.h"
+#include <stdarg.h>
+#include <assert.h>
 
 #define DEBUG   if(debug)
 #define MEGABYTE ( 1024 * 1024 ) /* USed as the default buffer sizes */
@@ -45,6 +49,7 @@ char influx_password[64+1];		/* optional for influxdb access */
 char *output; /* all the stats must fit in this buffer */
 long output_size = 0;
 long output_char = 0;
+long auto_push_limit = 1 * MEGABYTE;
 
 char *influx_tags; /* saved tags for every influxdb line protocol mesurement */
 
@@ -53,9 +58,10 @@ int first_sub = 0;		/* need to remove the ic_measure measure before adding ic_su
 char saved_section[64];
 char saved_sub[64];
 
-int sockfd;			/* file desciptor for socket connection */
+int sockfd=-1;                  /* file desciptor for socket connection */
+typedef unsigned char ic_charmap_t[256/8];
 
-void error(char *buf)
+void error(const char *buf)
 {
     fprintf(stderr, "error: \"%s\" errno=%d meaning=\"%s\"\n", buf, errno, strerror(errno));
     close(sockfd);
@@ -68,21 +74,112 @@ void ic_debug(int level)
 	debug = level;
 }
 
-/* ic_tags() argument is the measurement tags for influddb */
-/* example: "host=vm1234"   note:the comma & hostname of the virtual machine sending the data */
-/* complex: "host=lpar42,serialnum=987654,arch=power9" note:the comma separated list */
-void ic_tags(char *t)	
-{
-    DEBUG fprintf(stderr,"ic_tags(%s)\n",t);
-    if( influx_tags == (char *) 0) {
-        if( (influx_tags = (char *)malloc(MEGABYTE)) == (char *)-1)
+ic_charmap_t ic_cmap_esc_measuerment={
+    // ", "
+   [0x00]=0x00, [0x01]=0x00, [0x02]=0x00, [0x03]=0x00, [0x04]=0x01, [0x05]=0x10, [0x06]=0x00, [0x07]=0x00,
+   [0x08]=0x00, [0x09]=0x00, [0x0a]=0x00, [0x0b]=0x00, [0x0c]=0x00, [0x0d]=0x00, [0x0e]=0x00, [0x0f]=0x00,
+   [0x10]=0x00, [0x11]=0x00, [0x12]=0x00, [0x13]=0x00, [0x14]=0x00, [0x15]=0x00, [0x16]=0x00, [0x17]=0x00,
+   [0x18]=0x00, [0x19]=0x00, [0x1a]=0x00, [0x1b]=0x00, [0x1c]=0x00, [0x1d]=0x00, [0x1e]=0x00, [0x1f]=0x00,
+};
+ic_charmap_t ic_cmap_esc_fieldkey_tagkey_tagvalue={
+    //match " ,="
+   [0x00]=0x00, [0x01]=0x00, [0x02]=0x00, [0x03]=0x00, [0x04]=0x01, [0x05]=0x10, [0x06]=0x00, [0x07]=0x20,
+   [0x08]=0x00, [0x09]=0x00, [0x0a]=0x00, [0x0b]=0x00, [0x0c]=0x00, [0x0d]=0x00, [0x0e]=0x00, [0x0f]=0x00,
+   [0x10]=0x00, [0x11]=0x00, [0x12]=0x00, [0x13]=0x00, [0x14]=0x00, [0x15]=0x00, [0x16]=0x00, [0x17]=0x00,
+   [0x18]=0x00, [0x19]=0x00, [0x1a]=0x00, [0x1b]=0x00, [0x1c]=0x00, [0x1d]=0x00, [0x1e]=0x00, [0x1f]=0x00,
+};
+ic_charmap_t ic_cmap_esc_string_fieldvalue={
+    // "\"\\"
+    [0x00]=0x00, [0x01]=0x00, [0x02]=0x00, [0x03]=0x00, [0x04]=0x04, [0x05]=0x00, [0x06]=0x00, [0x07]=0x00,
+    [0x08]=0x00, [0x09]=0x00, [0x0a]=0x00, [0x0b]=0x10, [0x0c]=0x00, [0x0d]=0x00, [0x0e]=0x00, [0x0f]=0x00,
+    [0x10]=0x00, [0x11]=0x00, [0x12]=0x00, [0x13]=0x00, [0x14]=0x00, [0x15]=0x00, [0x16]=0x00, [0x17]=0x00,
+    [0x18]=0x00, [0x19]=0x00, [0x1a]=0x00, [0x1b]=0x00, [0x1c]=0x00, [0x1d]=0x00, [0x1e]=0x00, [0x1f]=0x00,
+};
+static inline int
+ic_test_in_charmap(ic_charmap_t charmap, unsigned char ordinal){
+    return charmap[ordinal/8]&(1u<<(ordinal%8));
+}
+/* ic_escape_str_cmap() arguments are the measurement tags for influddb, NULL terminated */
+/* example: ic_tags_escaped("host", "vm1234", NULL)   note:the comma & hostname of the virtual machine sending the data */
+/* complex: ic_tags_escaped("host", "lpar42", "serialnum", "987654", "arch", "power9", NULL) note:the comma separated list */
+ssize_t
+ic_escape_str_cmap(ic_charmap_t charmap, char *buf, size_t buf_len, const char*src){
+    size_t opos=0, ipos=0;
+    
+    --buf_len; // reserve space for EOS
+
+    while(opos < buf_len && src[ipos] != '\0'){
+        char c= src[ipos++];
+
+        if (c == '\n' || iscntrl((unsigned)c)){
+            c=' '; /* replace problem characters and with a space */
+        }else if(ic_test_in_charmap(charmap, c)){
+            buf[opos++]='\\';
+        }
+        buf[opos++]=c;
+    }
+    buf[opos]='\0';
+
+    assert(src[ipos] != '\0');
+
+    return opos;
+}
+/* ic_tags_escaped() arguments are the measurement tags for influddb, NULL terminated */
+/* example: ic_tags_escaped("host", "vm1234", NULL)   note:the comma & hostname of the virtual machine sending the data */
+/* complex: ic_tags_escaped("host", "lpar42", "serialnum", "987654", "arch", "power9", NULL) note:the comma separated list */
+void ic_tags_escaped(const char*first, ...){
+	va_list c_a;
+	const char *n_a;
+	char sep='\0';
+	size_t pos=0;
+	ssize_t ret;
+
+    DEBUG fprintf(stderr,"%s(%s)\n", __func__,first);
+    if( influx_tags == NULL ) {
+        if( (influx_tags = (char *)malloc(MEGABYTE)) == (char *)NULL)
            error("failed to malloc() tags buffer");
     }
 
-    strncpy(influx_tags,t,256);
+	va_start(c_a, first);
+
+    for( n_a = first ; n_a && pos < MEGABYTE - 1; n_a = va_arg(c_a, char*) ) {
+        switch(sep){
+            case ',':
+                influx_tags[pos++]=sep;
+            case '\0':
+                sep='=';
+                break;
+            case '=':
+                influx_tags[pos++]=sep;
+                sep=',';
+                break;
+        }
+        ret  = ic_escape_str_cmap(ic_cmap_esc_fieldkey_tagkey_tagvalue, influx_tags + pos, MEGABYTE - 1 - pos, n_a);
+        if(ret > 0){
+            pos += ret;
+        }
+    }
+
+	va_end(c_a);
+
+    influx_tags[pos]='\0';
+
+}
+/* ic_tags() argument is the measurement tags for influddb */
+/* example: "host=vm1234"   note:the comma & hostname of the virtual machine sending the data */
+/* complex: "host=lpar42,serialnum=987654,arch=power9" note:the comma separated list */
+void ic_tags(const char *t)     
+{
+    DEBUG fprintf(stderr,"ic_tags(%s)\n",t);
+    if( influx_tags == NULL ) {
+        if( (influx_tags = (char *)malloc(MEGABYTE)) == (char *)NULL)
+           error("failed to malloc() tags buffer");
+    }
+
+    strncpy(influx_tags, t, MEGABYTE);
 }
 
-void ic_influx_database(char *host, long port, char *db) /* note: converts influxdb hostname to ip address */
+void ic_influx_database(const char *host, long port, const char *db) /* note: converts influxdb hostname to ip address */
 {
 	struct hostent *he;
 	char errorbuf[1024 +1 ];
@@ -117,7 +214,7 @@ void ic_influx_database(char *host, long port, char *db) /* note: converts influ
         }
 }
 
-void ic_influx_userpw(char *user, char *pw)
+void ic_influx_userpw(const char *user, const char *pw)
 {
 	DEBUG fprintf(stderr,"ic_influx_userpw(username=%s,pssword=%s))\n",user,pw);
 	strncpy(influx_username,user,64);
@@ -126,8 +223,6 @@ void ic_influx_userpw(char *user, char *pw)
 
 int create_socket() 		/* returns 1 for error and 0 for ok */
 {
-    int i;
-    static char buffer[4096];
     static struct sockaddr_in serv_addr;
 
     if(debug) DEBUG fprintf(stderr, "socket: trying to connect to \"%s\":%ld\n", influx_ip, influx_port);
@@ -150,12 +245,9 @@ int create_socket() 		/* returns 1 for error and 0 for ok */
 
 void ic_check(long adding) /* Check the buffer space */
 {
-    if(output == (char *)0) {			/* First time create the buffer *
-	if( (output = (char *)malloc(MEGABYTE)) == (char *)-1)
-	    error("failed to malloc() output buffer");
-    }
-    if(output_char + (2*adding) > output_size) /* When near the end of the output buffer, extend it*/
-	if( (output = (char *)realloc(output, output_size + MEGABYTE)) == (char *)-1)
+    if(output_char + (2*adding) >= output_size) { /* When near the end of the output buffer, extend it*/
+        output_size += MEGABYTE;
+        if( (output = (char *)realloc(output, output_size)) == (char *)NULL)
 	    error("failed to realloc() output buffer");
     }
 }
@@ -168,36 +260,48 @@ void remove_ending_comma_if_any()
     }
 }
 
-void ic_measure(char *section)
+void ic_measure(const char *section)
 {
     ic_check( strlen(section) + strlen(influx_tags) + 3);
 
-    output_char += sprintf(&output[output_char], "%s,%s ", section, influx_tags);
-    strcpy(saved_section, section);
+    ic_escape_str_cmap(ic_cmap_esc_measuerment, saved_section, sizeof(saved_section), section);
+
+    output_char += sprintf(&output[output_char], "%s,%s ", saved_section, influx_tags);
     first_sub = 1;
     subended = 0;
     DEBUG fprintf(stderr, "ic_measure(\"%s\") count=%ld\n", section, output_char);
 }
 
-void ic_measureend()
+#define TIMESTAMP_STR_LEN sizeof("18446744073709551615")
+void ic_measureend(const uint64_t stamp)
 {
-    ic_check( 4 );
+    ic_check( 4 + TIMESTAMP_STR_LEN);
     remove_ending_comma_if_any();
     if (!subended) {
+        if(stamp){
+            output_char += sprintf(&output[output_char], "  %"PRIu64"\n", stamp);
+        }else{
          output_char += sprintf(&output[output_char], "   \n");
+        }
     }
     subended = 0;
     DEBUG fprintf(stderr, "ic_measureend()\n");
+    if(output_char > auto_push_limit){
+        ic_push();
+    }
 }
 
 /* Note this added a further tag to the measurement of the "resource_name" */
 /* measurement might be "disks" */
 /* sub might be "sda1", "sdb1", etc */
-void ic_sub(char *resource)
+void ic_sub(const char *resource)
 {
-    int i;
+    char escaped_resource[256];
+    long i;
 
-    ic_check( strlen(saved_section) + strlen(influx_tags) +strlen(saved_sub) + strlen(resource) + 9);
+    ic_escape_str_cmap(ic_cmap_esc_fieldkey_tagkey_tagvalue, escaped_resource, sizeof(escaped_resource), resource);
+
+    ic_check( strlen(saved_section) + strlen(influx_tags) +strlen(saved_sub) + strlen(escaped_resource) + 9);
 
     /* remove previously added section */
     if (first_sub) {
@@ -208,57 +312,75 @@ void ic_sub(char *resource)
 		break;
 	    }
 	}
+        if(i == 0){
+            output_char = 0;
+        }
     }
     first_sub = 0;
 
     /* remove the trailing s */
+    if(strlen(saved_section) > sizeof(saved_sub)){
+        abort();
+    }
     strcpy(saved_sub, saved_section);
     if (saved_sub[strlen(saved_sub) - 1] == 's') {
 	saved_sub[strlen(saved_sub) - 1] = 0;
     }
-    output_char += sprintf(&output[output_char], "%s,%s,%s_name=%s ", saved_section, influx_tags, saved_sub, resource);
+    output_char += sprintf(&output[output_char], "%s,%s,%s_name=%s ", saved_section, influx_tags, saved_sub, escaped_resource);
     subended = 0;
     DEBUG fprintf(stderr, "ic_sub(\"%s\") count=%ld\n", resource, output_char);
 }
 
-void ic_subend()
+void ic_subend(uint64_t stamp_nsec)
 {
-    ic_check( 4 );
+    ic_check( 4 + TIMESTAMP_STR_LEN);
     remove_ending_comma_if_any();
-    output_char += sprintf(&output[output_char], "   \n");
+    if(stamp_nsec){
+        output_char += sprintf(&output[output_char], "  %"PRIu64"\n", stamp_nsec);
+    }else{
+        output_char += sprintf(&output[output_char], "   \n");
+    }
     subended = 1;
     DEBUG fprintf(stderr, "ic_subend()\n");
 }
 
-void ic_long(char *name, long long value)
+void ic_long(const char *name, long long value)
 {
     ic_check( strlen(name) + 16 + 4 );
-    output_char += sprintf(&output[output_char], "%s=%lldi,", name, value);
+
+    output_char += ic_escape_str_cmap(ic_cmap_esc_fieldkey_tagkey_tagvalue, &output[output_char], output_size - output_char, name);
+
+    output_char += snprintf(&output[output_char], output_size - output_char, "=%lldi,", value);
     DEBUG fprintf(stderr, "ic_long(\"%s\",%lld) count=%ld\n", name, value, output_char);
 }
 
-void ic_double(char *name, double value)
+void ic_double(const char *name, double value)
 {
-    ic_check( strlen(name) + 16 + 4 );
     if (isnan(value) || isinf(value)) { /* not-a-number or infinity */
-	DEBUG fprintf(stderr, "ic_double(%s,%.1f) - nan error\n", name, value);
+        DEBUG fprintf(stderr, "ic_double(%s,%.1f) - nan error\n", name, value);
     } else {
-	output_char += sprintf(&output[output_char], "%s=%.3f,", name, value);
-	DEBUG fprintf(stderr, "ic_double(\"%s\",%.1f) count=%ld\n", name, value, output_char);
+        ic_check( strlen(name) + 16 + 4 );
+
+        output_char += ic_escape_str_cmap(ic_cmap_esc_fieldkey_tagkey_tagvalue, &output[output_char], output_size - output_char, name);
+
+        output_char += snprintf(&output[output_char], output_size - output_char, "=%.3f,", value);
+
+        DEBUG fprintf(stderr, "ic_double(\"%s\",%.1f) count=%ld\n", name, value, output_char);
     }
 }
 
-void ic_string(char *name, char *value)
+void ic_string(const char *name, char *value)
 {
-    int i;
-    int len;
-
     ic_check( strlen(name) + strlen(value) + 4 );
-    len = strlen(value);
-    for (i = 0; i < len; i++) 	/* replace problem characters and with a space */
-	if (value[i] == '\n' || iscntrl(value[i]))
-	    value[i] = ' ';
-    output_char += sprintf(&output[output_char], "%s=\"%s\",", name, value);
+
+    output_char += ic_escape_str_cmap(ic_cmap_esc_fieldkey_tagkey_tagvalue, &output[output_char], output_size - output_char, name);
+    output[output_char++]='=';
+    output[output_char++]='"';
+    // Length limit 64KB.
+    output_char += ic_escape_str_cmap(ic_cmap_esc_string_fieldvalue, &output[output_char], output_size - output_char, value);
+    output[output_char++]='"';
+    output[output_char++]=',';
+
     DEBUG fprintf(stderr, "ic_string(\"%s\",\"%s\") count=%ld\n", name, value, output_char);
 }
 
@@ -313,7 +435,7 @@ void ic_push()
 		    fprintf(stderr, "code %d -->%s<--\n", code, result);
 	    }
 	    close(sockfd);
-	    sockfd = 0;
+	    sockfd = -1;
 	    DEBUG fprintf(stderr, "ic_push complete\n");
 	} else {
 	    DEBUG fprintf(stderr, "socket create failed\n");
@@ -368,7 +490,7 @@ int main(int argc, char **argv)
 	    ic_string("status", "high");
 	else
 	    ic_string("status", "low");
-	ic_measureend();
+	ic_measureend(0);
 
 /* Measure with a single subsection - could be more */
  
@@ -378,9 +500,9 @@ int main(int argc, char **argv)
 		ic_sub(buf);
 		ic_long("reads",    (long long)(i * RANGE(1,30)));
 		ic_double("writes", (double)   (i * 3.142 * RANGE(1,30)));
-		ic_subend();
+		ic_subend(0);
 	}
-	ic_measureend();
+	ic_measureend(0);
 
 /* Send all data in one packet to InfluxDB */
 
