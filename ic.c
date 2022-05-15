@@ -127,8 +127,6 @@ void ic_influx_userpw(const char *user, const char *pw)
 
 int create_socket() 		/* returns 1 for error and 0 for ok */
 {
-    int i;
-    static char buffer[4096];
     static struct sockaddr_in serv_addr;
 
     if(debug) DEBUG fprintf(stderr, "socket: trying to connect to \"%s\":%ld\n", influx_ip, influx_port);
