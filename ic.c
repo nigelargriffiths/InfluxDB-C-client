@@ -208,6 +208,9 @@ void ic_sub(char *resource)
 		break;
 	    }
 	}
+        if(i == 0){
+            output_char = 0;
+        }
     }
     first_sub = 0;
 
