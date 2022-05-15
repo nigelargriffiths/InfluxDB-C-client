@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <ic.h>
 
 #define DEBUG   if(debug)
 #define MEGABYTE ( 1024 * 1024 ) /* USed as the default buffer sizes */
@@ -71,7 +72,7 @@ void ic_debug(int level)
 /* ic_tags() argument is the measurement tags for influddb */
 /* example: "host=vm1234"   note:the comma & hostname of the virtual machine sending the data */
 /* complex: "host=lpar42,serialnum=987654,arch=power9" note:the comma separated list */
-void ic_tags(char *t)	
+void ic_tags(const char *t)     
 {
     DEBUG fprintf(stderr,"ic_tags(%s)\n",t);
     if( influx_tags == NULL ) {
@@ -82,7 +83,7 @@ void ic_tags(char *t)
     strncpy(influx_tags, t, MEGABYTE);
 }
 
-void ic_influx_database(char *host, long port, char *db) /* note: converts influxdb hostname to ip address */
+void ic_influx_database(const char *host, long port, const char *db) /* note: converts influxdb hostname to ip address */
 {
 	struct hostent *he;
 	char errorbuf[1024 +1 ];
@@ -117,7 +118,7 @@ void ic_influx_database(char *host, long port, char *db) /* note: converts influ
         }
 }
 
-void ic_influx_userpw(char *user, char *pw)
+void ic_influx_userpw(const char *user, const char *pw)
 {
 	DEBUG fprintf(stderr,"ic_influx_userpw(username=%s,pssword=%s))\n",user,pw);
 	strncpy(influx_username,user,64);
@@ -165,7 +166,7 @@ void remove_ending_comma_if_any()
     }
 }
 
-void ic_measure(char *section)
+void ic_measure(const char *section)
 {
     ic_check( strlen(section) + strlen(influx_tags) + 3);
 
@@ -193,7 +194,7 @@ void ic_measureend()
 /* Note this added a further tag to the measurement of the "resource_name" */
 /* measurement might be "disks" */
 /* sub might be "sda1", "sdb1", etc */
-void ic_sub(char *resource)
+void ic_sub(const char *resource)
 {
     int i;
 
@@ -236,14 +237,14 @@ void ic_subend()
     DEBUG fprintf(stderr, "ic_subend()\n");
 }
 
-void ic_long(char *name, long long value)
+void ic_long(const char *name, long long value)
 {
     ic_check( strlen(name) + 16 + 4 );
     output_char += sprintf(&output[output_char], "%s=%lldi,", name, value);
     DEBUG fprintf(stderr, "ic_long(\"%s\",%lld) count=%ld\n", name, value, output_char);
 }
 
-void ic_double(char *name, double value)
+void ic_double(const char *name, double value)
 {
     ic_check( strlen(name) + 16 + 4 );
     if (isnan(value) || isinf(value)) { /* not-a-number or infinity */
@@ -254,7 +255,7 @@ void ic_double(char *name, double value)
     }
 }
 
-void ic_string(char *name, char *value)
+void ic_string(const char *name, char *value)
 {
     int i;
     int len;
