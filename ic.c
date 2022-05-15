@@ -46,6 +46,7 @@ char influx_password[64+1];		/* optional for influxdb access */
 char *output; /* all the stats must fit in this buffer */
 long output_size = 0;
 long output_char = 0;
+long auto_push_limit = 1 * MEGABYTE;
 
 char *influx_tags; /* saved tags for every influxdb line protocol mesurement */
 
@@ -56,7 +57,7 @@ char saved_sub[64];
 
 int sockfd=-1;                  /* file desciptor for socket connection */
 
-void error(char *buf)
+void error(const char *buf)
 {
     fprintf(stderr, "error: \"%s\" errno=%d meaning=\"%s\"\n", buf, errno, strerror(errno));
     close(sockfd);
@@ -192,6 +193,9 @@ void ic_measureend(const uint64_t stamp)
     }
     subended = 0;
     DEBUG fprintf(stderr, "ic_measureend()\n");
+    if(output_char > auto_push_limit){
+        ic_push();
+    }
 }
 
 /* Note this added a further tag to the measurement of the "resource_name" */
