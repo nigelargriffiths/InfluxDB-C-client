@@ -14,11 +14,14 @@
 
  void ic_sub(const char *sub_name);
  void ic_subend(uint64_t);
+ 
+ int  ic_create_db(void);
+ int  ic_drop_db(void);
 
  void ic_long(const char *name, long long value);
  void ic_double(const char *name, double value);
  void ic_string(const char *name, char *value);
 
- void ic_push();
+ int  ic_push();
  void ic_debug(int level);
 
