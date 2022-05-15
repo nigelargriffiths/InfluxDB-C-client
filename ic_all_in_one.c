@@ -552,7 +552,7 @@ int  ic_query(const char * query_str, unsigned include_db)
 
     buffer[pos++]='q';
     buffer[pos++]='=';
-    pos += ic_urlencode(buffer + pos, sizeof(buffer) - pos, query_str);
+    pos += ic_urlencode(buffer + pos, sizeof(buffer) - pos - 3, query_str);
     buffer[pos++]='\n';
     buffer[pos++]='\r';
     buffer[pos]='\0';
