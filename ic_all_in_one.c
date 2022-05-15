@@ -120,7 +120,7 @@ ic_escape_str_cmap(ic_charmap_t charmap, char *buf, size_t buf_len, const char*s
     }
     buf[opos]='\0';
 
-    assert(src[ipos] != '\0');
+    assert(src[ipos] == '\0');
 
     return opos;
 }
@@ -219,6 +219,31 @@ void ic_influx_userpw(const char *user, const char *pw)
 	DEBUG fprintf(stderr,"ic_influx_userpw(username=%s,pssword=%s))\n",user,pw);
 	strncpy(influx_username,user,64);
 	strncpy(influx_password,pw,64);
+}
+
+/* ic_influx_url setup influx db config from url */
+/* example http://host:port/db */
+/* example http://user:pass@host:port/db */
+void ic_influx_url(const char * influx_db){
+    int ret;
+    char errorbuf[1024 +1 ];
+    char ic_username[64 + 1]={0};
+    char ic_password[64 + 1]={0};
+    char ic_hostname[1024 + 1];
+    unsigned ic_port;
+    char ic_db[256 + 1];
+    ret=sscanf(influx_db, "http://%[^:]:%[^@]@%[^:]:%i/%s", ic_username, ic_password, ic_hostname, &ic_port, ic_db);
+    if(ret != 5){
+        ret=sscanf(influx_db, "http://%[^:]:%i/%s", ic_hostname, &ic_port, ic_db);
+        if(ret != 3){
+            sprintf(errorbuf, "Error parsing influx_db '%s'\n", influx_db);
+            error(errorbuf);
+        }
+        ic_username[0]='\0';
+        ic_password[0]='\0';
+    }
+    ic_influx_userpw(ic_username, ic_password);
+    ic_influx_database(ic_hostname, ic_port, ic_db);
 }
 
 int create_socket() 		/* returns 1 for error and 0 for ok */
@@ -465,8 +490,12 @@ int main(int argc, char **argv)
 
 	ic_debug(1); /* maximum output */
 
-	ic_influx_database("silver2", 8086, "ic");
-	ic_influx_userpw("nigel", "secret");
+	if(argc > 1){
+        ic_influx_url(argv[1]);
+    }else{
+        ic_influx_database("silver2", 8086, "ic");
+        ic_influx_userpw("nigel", "secret");
+    }
 
 /* Intitalise */
 

@@ -3,6 +3,7 @@
  * Developer: Nigel Griffiths.
  * (C) Copyright 2021 Nigel Griffiths
  */
+ void ic_influx_url(const char * influx_db);
  void ic_influx_database(const char *host, long port, const char *db);
  void ic_influx_userpw(const char *user, const char *pw);
  void ic_tags(const char *tags);
