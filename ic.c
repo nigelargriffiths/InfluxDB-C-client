@@ -54,7 +54,7 @@ int first_sub = 0;		/* need to remove the ic_measure measure before adding ic_su
 char saved_section[64];
 char saved_sub[64];
 
-int sockfd;			/* file desciptor for socket connection */
+int sockfd=-1;                  /* file desciptor for socket connection */
 
 void error(char *buf)
 {
@@ -320,7 +320,7 @@ void ic_push()
 		    fprintf(stderr, "code %d -->%s<--\n", code, result);
 	    }
 	    close(sockfd);
-	    sockfd = 0;
+	    sockfd = -1;
 	    DEBUG fprintf(stderr, "ic_push complete\n");
 	} else {
 	    DEBUG fprintf(stderr, "socket create failed\n");
