@@ -6,6 +6,7 @@
  void ic_influx_database(const char *host, long port, const char *db);
  void ic_influx_userpw(const char *user, const char *pw);
  void ic_tags(const char *tags);
+ void ic_tags_escaped(const char*first, ...);
 
  void ic_measure(const char *section);
  void ic_measureend(uint64_t);
