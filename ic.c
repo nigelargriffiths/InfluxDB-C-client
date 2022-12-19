@@ -42,11 +42,11 @@ char influx_database[256+1];		/* the influxdb database  */
 char influx_username[64+1];		/* optional for influxdb access */
 char influx_password[64+1];		/* optional for influxdb access */
 
-char *output; /* all the stats must fit in this buffer */
+char *output = NULL; /* all the stats must fit in this buffer */
 long output_size = 0;
 long output_char = 0;
 
-char *influx_tags; /* saved tags for every influxdb line protocol mesurement */
+char *influx_tags = NULL; /* saved tags for every influxdb line protocol mesurement */
 
 int subended = 0;		/* stop ic_subend and ic_measureend both enig the measure */
 int first_sub = 0;		/* need to remove the ic_measure measure before adding ic_sub measure */
@@ -55,7 +55,7 @@ char saved_sub[64];
 
 int sockfd;			/* file desciptor for socket connection */
 
-void error(char *buf)
+void error(const char *buf)
 {
     fprintf(stderr, "error: \"%s\" errno=%d meaning=\"%s\"\n", buf, errno, strerror(errno));
     close(sockfd);
@@ -71,7 +71,7 @@ void ic_debug(int level)
 /* ic_tags() argument is the measurement tags for influddb */
 /* example: "host=vm1234"   note:the comma & hostname of the virtual machine sending the data */
 /* complex: "host=lpar42,serialnum=987654,arch=power9" note:the comma separated list */
-void ic_tags(char *t)	
+void ic_tags(const char *t)	
 {
     DEBUG fprintf(stderr,"ic_tags(%s)\n",t);
     if( influx_tags == (char *) 0) {
@@ -82,7 +82,7 @@ void ic_tags(char *t)
     strncpy(influx_tags,t,256);
 }
 
-void ic_influx_database(char *host, long port, char *db) /* note: converts influxdb hostname to ip address */
+void ic_influx_database(const char *host, long port, const char *db) /* note: converts influxdb hostname to ip address */
 {
 	struct hostent *he;
 	char errorbuf[1024 +1 ];
@@ -117,7 +117,7 @@ void ic_influx_database(char *host, long port, char *db) /* note: converts influ
         }
 }
 
-void ic_influx_userpw(char *user, char *pw)
+void ic_influx_userpw(const char *user, const char *pw)
 {
 	DEBUG fprintf(stderr,"ic_influx_userpw(username=%s,pssword=%s))\n",user,pw);
 	strncpy(influx_username,user,64);
@@ -126,8 +126,6 @@ void ic_influx_userpw(char *user, char *pw)
 
 int create_socket() 		/* returns 1 for error and 0 for ok */
 {
-    int i;
-    static char buffer[4096];
     static struct sockaddr_in serv_addr;
 
     if(debug) DEBUG fprintf(stderr, "socket: trying to connect to \"%s\":%ld\n", influx_ip, influx_port);
@@ -150,11 +148,7 @@ int create_socket() 		/* returns 1 for error and 0 for ok */
 
 void ic_check(long adding) /* Check the buffer space */
 {
-    if(output == (char *)0) {			/* First time create the buffer *
-	if( (output = (char *)malloc(MEGABYTE)) == (char *)-1)
-	    error("failed to malloc() output buffer");
-    }
-    if(output_char + (2*adding) > output_size) /* When near the end of the output buffer, extend it*/
+    if(output == (char *)0) {
 	if( (output = (char *)realloc(output, output_size + MEGABYTE)) == (char *)-1)
 	    error("failed to realloc() output buffer");
     }
@@ -168,7 +162,7 @@ void remove_ending_comma_if_any()
     }
 }
 
-void ic_measure(char *section)
+void ic_measure(const char *section)
 {
     ic_check( strlen(section) + strlen(influx_tags) + 3);
 
@@ -193,7 +187,7 @@ void ic_measureend()
 /* Note this added a further tag to the measurement of the "resource_name" */
 /* measurement might be "disks" */
 /* sub might be "sda1", "sdb1", etc */
-void ic_sub(char *resource)
+void ic_sub(const char *resource)
 {
     int i;
 
@@ -230,14 +224,14 @@ void ic_subend()
     DEBUG fprintf(stderr, "ic_subend()\n");
 }
 
-void ic_long(char *name, long long value)
+void ic_long(const char *name, long long value)
 {
     ic_check( strlen(name) + 16 + 4 );
     output_char += sprintf(&output[output_char], "%s=%lldi,", name, value);
     DEBUG fprintf(stderr, "ic_long(\"%s\",%lld) count=%ld\n", name, value, output_char);
 }
 
-void ic_double(char *name, double value)
+void ic_double(const char *name, double value)
 {
     ic_check( strlen(name) + 16 + 4 );
     if (isnan(value) || isinf(value)) { /* not-a-number or infinity */
@@ -248,7 +242,7 @@ void ic_double(char *name, double value)
     }
 }
 
-void ic_string(char *name, char *value)
+void ic_string(const char *name, char *value)
 {
     int i;
     int len;
@@ -264,7 +258,6 @@ void ic_string(char *name, char *value)
 
 void ic_push()
 {
-    char header[1024];
     char result[1024];
     char buffer[1024 * 8];
     int ret;
